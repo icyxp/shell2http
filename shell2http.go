@@ -148,7 +148,7 @@ func getConfig() (cmdHandlers []Command, appConfig Config, err error) {
 	flag.StringVar(&logFilename, "log", "", "log filename, default - STDOUT")
 	flag.IntVar(&appConfig.port, "port", PORT, "port for http server")
 	flag.StringVar(&appConfig.host, "host", "", "host for http server")
-	flag.BoolVar(&appConfig.setCGI, "cgi", false, "run scripts in CGI-mode")
+	flag.BoolVar(&appConfig.setCGI, "cgi", true, "run scripts in CGI-mode")
 	flag.StringVar(&appConfig.exportVars, "export-vars", "", "export environment vars (\"VAR1,VAR2,...\")")
 	flag.BoolVar(&appConfig.exportAllVars, "export-all-vars", false, "export all current environment vars")
 	flag.BoolVar(&appConfig.setForm, "form", false, "parse query into environment vars, handle uploaded files")
