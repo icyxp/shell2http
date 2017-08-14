@@ -262,7 +262,10 @@ func printAccessLogLine(req *http.Request) {
 func validateIP(req *http.Request) error {
 	var clientIP string
 	if req.Header["X-Forwarded-For"] != nil {
-		clientIP = req.Header["X-Forwarded-For"][0]
+		//fix in docker x-forwarded-for bug
+		ipArr := strings.Split(req.Header["X-Forwarded-For"][0], ",")
+		clientIP = ipArr[0]
+
 	} else {
 		remoteAddr := regexp.MustCompile(`^(.+):(\d+)$`).FindStringSubmatch(req.RemoteAddr)
 		clientIP = remoteAddr[1]
