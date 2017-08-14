@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -104,12 +106,27 @@ type Config struct {
 	oneThread     bool   // run each shell commands in one thread
 	showErrors    bool   // returns the standard output even if the command exits with a non-zero exit code
 	includeStderr bool   // also returns output written to stderr (default is stdout only)
+	privateIP     bool
 }
 
 const (
 	maxHTTPCode            = 1000
 	maxMemoryForUploadFile = 65536
 )
+
+// ------------------------------------------------------------------
+// Verify that the ip address is a private address
+func ipCheck(from net.IP, to net.IP, test net.IP) bool {
+	from16 := from.To16()
+	to16 := to.To16()
+	test16 := test.To16()
+
+	if bytes.Compare(test16, from16) >= 0 && bytes.Compare(test16, to16) <= 0 {
+		return true
+	}
+
+	return false
+}
 
 // ------------------------------------------------------------------
 // getConfig - parse arguments
@@ -146,6 +163,7 @@ func getConfig() (cmdHandlers []Command, appConfig Config, err error) {
 	flag.StringVar(&appConfig.key, "key", "", "SSL private key path")
 	flag.StringVar(&basicAuth, "basic-auth", "", "setup HTTP Basic Authentication (\"user_name:password\")")
 	flag.IntVar(&appConfig.timeout, "timeout", 0, "set timeout for execute shell command (in seconds)")
+	flag.BoolVar(&appConfig.privateIP, "private-ip-access", true, "only private ip address access")
 
 	flag.Usage = func() {
 		fmt.Printf("usage: %s [options] /path \"shell command\" /path2 \"shell command2\"\n", os.Args[0])
@@ -241,6 +259,30 @@ func printAccessLogLine(req *http.Request) {
 	log.Printf("%s %s %s %s \"%s\"", req.Host, remoteAddr, req.Method, req.RequestURI, req.UserAgent())
 }
 
+func validateIP(req *http.Request) error {
+	var clientIP string
+	if req.Header["X-Forwarded-For"] != nil {
+		clientIP = req.Header["X-Forwarded-For"][0]
+	} else {
+		remoteAddr := regexp.MustCompile(`^(.+):(\d+)$`).FindStringSubmatch(req.RemoteAddr)
+		clientIP = remoteAddr[1]
+	}
+
+	if net.ParseIP(clientIP) == nil {
+		return fmt.Errorf("ip address not legal %s", clientIP)
+	}
+
+	if ipCheck(net.ParseIP("127.0.0.0"), net.ParseIP("127.255.255.255"), net.ParseIP(clientIP)) ||
+		ipCheck(net.ParseIP("10.0.0.0"), net.ParseIP("10.255.255.255"), net.ParseIP(clientIP)) ||
+		ipCheck(net.ParseIP("172.16.0.0"), net.ParseIP("172.31.255.255"), net.ParseIP(clientIP)) ||
+		ipCheck(net.ParseIP("192.168.0.0"), net.ParseIP("192.168.255.255"), net.ParseIP(clientIP)) {
+	} else {
+		return fmt.Errorf("only access private address, your addres %s", clientIP)
+	}
+
+	return nil
+}
+
 // ------------------------------------------------------------------
 // getShellHandler - get handler function for one shell command
 func getShellHandler(appConfig Config, path string, shell string, params []string, cacheTTL raphanus.DB) func(http.ResponseWriter, *http.Request) {
@@ -255,6 +297,16 @@ func getShellHandler(appConfig Config, path string, shell string, params []strin
 
 		printAccessLogLine(req)
 		setCommonHeaders(rw)
+
+		if appConfig.privateIP {
+			err := validateIP(req)
+			if err != nil {
+				rw.Header().Set("X-Shell2http-Exit-Code", fmt.Sprintf("%d", getExitCode(err)))
+				responseWrite(rw, "exec error: "+err.Error())
+				return
+			}
+
+		}
 
 		shellOut, err := execShellCommand(appConfig, path, shell, params, req, cacheTTL)
 		if err != nil {
